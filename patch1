@@ -1,0 +1,1461 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000000000000000000000000000000000000..0bb3e8273a906c55e6fc0bc2cac59297cf72e57b
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1 @@
++NEXT_PUBLIC_API_URL=https://your-domain.com/api
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a609176e74b3152df0b212b2b0e8485b866e7e5
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,14 @@
++# Node
++node_modules/
++.next/
++out/
++
++# Python
++__pycache__/
++*.pyc
++
++# Env
++.env
++
++# OS
++.DS_Store
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..460ad596302061923932c9dc203729d3605806c2
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,37 @@
++# Ayushkendra Mono-Repo
++
++This repository contains a deployable institutional commerce stack baseline for Ayushkendra.
++
++## Structure
++- `backend/` FastAPI service
++- `frontend/` Next.js web app
++- `migrations/` Database SQL migrations
++- `invoices/` Sample invoice PDFs
++- `docs/` Operations and deployment documentation
++- `deploy/` Nginx and deployment runtime config
++- `scripts/` Readiness and deployment scripts
++
++## Deployment readiness status
++
++Implemented for Hostinger VPS:
++- Dockerized backend and frontend
++- Nginx reverse proxy configuration
++- Readiness validation script
++- VPS deployment script
++- Hostinger deployment runbook
++
++Start here:
++
++```bash
++./scripts/check_deploy_readiness.sh
++```
++
++Then follow:
++
++- `docs/HOSTINGER_VPS_DEPLOY.md`
++
++## Business Model
++- Aggregated Institutional Supplier
++- Manufacturer-executed delivery
++- 11% margin on wholesale
++- Bank-only payments
+diff --git a/backend/Dockerfile b/backend/Dockerfile
+new file mode 100644
+index 0000000000000000000000000000000000000000..09163bc56aacf3cbcbe585031087f4d4a58e5e4e
+--- /dev/null
++++ b/backend/Dockerfile
+@@ -0,0 +1,14 @@
++FROM python:3.12-slim
++
++WORKDIR /app
++
++ENV PYTHONDONTWRITEBYTECODE=1 \
++    PYTHONUNBUFFERED=1
++
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++
++COPY . .
++
++EXPOSE 8000
++CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+diff --git a/backend/main.py b/backend/main.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..39b68773062dbf6b445d2cc6b8ec1226d16ba548
+--- /dev/null
++++ b/backend/main.py
+@@ -0,0 +1,13 @@
++from fastapi import FastAPI
++
++app = FastAPI(title="Ayushkendra Backend", version="1.0.0")
++
++
++@app.get("/health")
++def health() -> dict[str, str]:
++    return {"status": "ok"}
++
++
++@app.get("/")
++def root() -> dict[str, str]:
++    return {"service": "ayushkendra-backend", "status": "ready"}
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..babedd0b4e243b98eb7d02d5d9a125ebe7b71408
+--- /dev/null
++++ b/backend/requirements.txt
+@@ -0,0 +1,2 @@
++fastapi==0.116.1
++uvicorn[standard]==0.35.0
+diff --git a/deploy/nginx/default.conf b/deploy/nginx/default.conf
+new file mode 100644
+index 0000000000000000000000000000000000000000..905b8782668d585ededdbaa91922744c49f58249
+--- /dev/null
++++ b/deploy/nginx/default.conf
+@@ -0,0 +1,24 @@
++server {
++    listen 80;
++    server_name _;
++
++    location /.well-known/acme-challenge/ {
++        root /var/www/certbot;
++    }
++
++    location /api/ {
++        proxy_pass http://backend:8000/;
++        proxy_set_header Host $host;
++        proxy_set_header X-Real-IP $remote_addr;
++        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++        proxy_set_header X-Forwarded-Proto $scheme;
++    }
++
++    location / {
++        proxy_pass http://frontend:3000;
++        proxy_set_header Host $host;
++        proxy_set_header X-Real-IP $remote_addr;
++        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++        proxy_set_header X-Forwarded-Proto $scheme;
++    }
++}
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..771b6d4e6f68c77b7d074d3ba9e84b5ebbbc310e
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,37 @@
++services:
++  backend:
++    build: ./backend
++    container_name: ayushkendra_backend
++    restart: unless-stopped
++    env_file:
++      - .env
++    expose:
++      - "8000"
++
++  frontend:
++    build: ./frontend
++    container_name: ayushkendra_frontend
++    restart: unless-stopped
++    env_file:
++      - .env
++    environment:
++      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
++    expose:
++      - "3000"
++    depends_on:
++      - backend
++
++  nginx:
++    image: nginx:1.27-alpine
++    container_name: ayushkendra_nginx
++    restart: unless-stopped
++    ports:
++      - "80:80"
++      - "443:443"
++    volumes:
++      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
++      - ./deploy/certbot/www:/var/www/certbot
++      - ./deploy/certbot/conf:/etc/letsencrypt
++    depends_on:
++      - frontend
++      - backend
+diff --git a/docs/GO_LIVE_CHECKLIST.md b/docs/GO_LIVE_CHECKLIST.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..34a459597c79f0ca84275a74bd455533a5b669a8
+--- /dev/null
++++ b/docs/GO_LIVE_CHECKLIST.md
+@@ -0,0 +1,26 @@
++# Ayushkendra Production Go-Live Checklist
++
++## Pre-Go-Live
++- [ ] Domain DNS configured (`www.ayushkendra.com`)
++- [ ] SSL enabled
++- [ ] Bank account verified
++- [ ] GSTIN verified
++- [ ] Manufacturer MoUs signed
++
++## Technical
++- [x] Backend deploy baseline prepared (FastAPI + Docker)
++- [x] Frontend deploy baseline prepared (Next.js + Docker)
++- [x] Reverse proxy baseline prepared (Nginx)
++- [x] Hostinger VPS deployment guide added
++- [ ] Database migrations applied
++- [ ] Daily backups enabled
++
++## Operations
++- [ ] Admin users created
++- [ ] Settlement SLA (T+7) enforced
++- [ ] Invoice PDF tested
++- [ ] GST reports validated
++
++## Compliance
++- [ ] PSU annexures approved
++- [ ] Audit logs enabled
+diff --git a/docs/HOSTINGER_VPS_DEPLOY.md b/docs/HOSTINGER_VPS_DEPLOY.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..f738f1acb07675c47d3070661cd83aa107101b16
+--- /dev/null
++++ b/docs/HOSTINGER_VPS_DEPLOY.md
+@@ -0,0 +1,50 @@
++# Hostinger VPS Deployment Guide
++
++This repository is now deployment-ready with Docker-based services for:
++- `frontend` (Next.js)
++- `backend` (FastAPI)
++- `nginx` reverse proxy
++
++## 1) Readiness check
++
++```bash
++./scripts/check_deploy_readiness.sh
++```
++
++## 2) Hostinger deploy link
++
++Use the Hostinger VPS panel to provision/manage your server:
++
++- https://hpanel.hostinger.com/vps
++
++## 3) VPS setup and app deploy
++
++On the VPS:
++
++```bash
++git clone <your-repo-url>
++cd ayushkendra.com
++cp .env.example .env
++./scripts/deploy_hostinger_vps.sh your-domain.com your-email@example.com
++```
++
++## 4) DNS
++
++Point your domain A record to the VPS public IP in Hostinger DNS.
++
++## 5) Verify
++
++```bash
++curl -I http://your-domain.com
++curl http://your-domain.com/api/health
++curl http://your-domain.com
++```
++
++Expected:
++- Frontend returns HTML on `/`
++- Backend returns JSON on `/api/health`
++
++## Notes
++
++- Add HTTPS server block in `deploy/nginx/default.conf` after cert issuance.
++- Run `docker compose pull && docker compose up -d --build` for updates.
+diff --git a/frontend/Dockerfile b/frontend/Dockerfile
+new file mode 100644
+index 0000000000000000000000000000000000000000..cdf290803d2bd3246bc0643347629bd0c3d78e69
+--- /dev/null
++++ b/frontend/Dockerfile
+@@ -0,0 +1,22 @@
++FROM node:20-alpine AS deps
++WORKDIR /app
++COPY package*.json ./
++RUN npm ci
++
++FROM node:20-alpine AS builder
++WORKDIR /app
++COPY --from=deps /app/node_modules ./node_modules
++COPY . .
++RUN npm run build
++
++FROM node:20-alpine AS runner
++WORKDIR /app
++ENV NODE_ENV=production
++ENV PORT=3000
++
++COPY --from=builder /app/.next/standalone ./
++COPY --from=builder /app/.next/static ./.next/static
++COPY --from=builder /app/public ./public
++
++EXPOSE 3000
++CMD ["node", "server.js"]
+diff --git a/frontend/next.config.js b/frontend/next.config.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f9cdc14201da4b121bf438c2b8835ef17a7c588
+--- /dev/null
++++ b/frontend/next.config.js
+@@ -0,0 +1,6 @@
++/** @type {import('next').NextConfig} */
++const nextConfig = {
++  output: 'standalone'
++};
++
++module.exports = nextConfig;
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..99262a826c3c7e18a26a3be3d9990f6e4886b3db
+--- /dev/null
++++ b/frontend/package-lock.json
+@@ -0,0 +1,909 @@
++{
++  "name": "ayushkendra-frontend",
++  "version": "1.0.0",
++  "lockfileVersion": 3,
++  "requires": true,
++  "packages": {
++    "": {
++      "name": "ayushkendra-frontend",
++      "version": "1.0.0",
++      "dependencies": {
++        "next": "16.1.6",
++        "react": "19.2.0",
++        "react-dom": "19.2.0"
++      }
++    },
++    "node_modules/@emnapi/runtime": {
++      "version": "1.8.1",
++      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.8.1.tgz",
++      "integrity": "sha512-mehfKSMWjjNol8659Z8KxEMrdSJDDot5SXMq00dM8BN4o+CLNXQ0xH2V7EchNHV4RmbZLmmPdEaXZc5H2FXmDg==",
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@img/colour": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/@img/colour/-/colour-1.0.0.tgz",
++      "integrity": "sha512-A5P/LfWGFSl6nsckYtjw9da+19jB8hkJ6ACTGcDfEJ0aE+l2n2El7dsVM7UVHZQ9s2lmYMWlrS21YLy2IR1LUw==",
++      "license": "MIT",
++      "optional": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@img/sharp-darwin-arm64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.34.5.tgz",
++      "integrity": "sha512-imtQ3WMJXbMY4fxb/Ndp6HBTNVtWCUI0WdobyheGf5+ad6xX8VIDO8u2xE4qc/fr08CKG/7dDseFtn6M6g/r3w==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-darwin-arm64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-darwin-x64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.34.5.tgz",
++      "integrity": "sha512-YNEFAF/4KQ/PeW0N+r+aVVsoIY0/qxxikF2SWdp+NRkmMB7y9LBZAVqQ4yhGCm/H3H270OSykqmQMKLBhBJDEw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-darwin-x64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-libvips-darwin-arm64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.2.4.tgz",
++      "integrity": "sha512-zqjjo7RatFfFoP0MkQ51jfuFZBnVE2pRiaydKJ1G/rHZvnsrHAOcQALIi9sA5co5xenQdTugCvtb1cuf78Vf4g==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-darwin-x64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.2.4.tgz",
++      "integrity": "sha512-1IOd5xfVhlGwX+zXv2N93k0yMONvUlANylbJw1eTah8K/Jtpi15KC+WSiaX/nBmbm2HxRM1gZ0nSdjSsrZbGKg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linux-arm": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.2.4.tgz",
++      "integrity": "sha512-bFI7xcKFELdiNCVov8e44Ia4u2byA+l3XtsAj+Q8tfCwO6BQ8iDojYdvoPMqsKDkuoOo+X6HZA0s0q11ANMQ8A==",
++      "cpu": [
++        "arm"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linux-arm64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.2.4.tgz",
++      "integrity": "sha512-excjX8DfsIcJ10x1Kzr4RcWe1edC9PquDRRPx3YVCvQv+U5p7Yin2s32ftzikXojb1PIFc/9Mt28/y+iRklkrw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linux-ppc64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.2.4.tgz",
++      "integrity": "sha512-FMuvGijLDYG6lW+b/UvyilUWu5Ayu+3r2d1S8notiGCIyYU/76eig1UfMmkZ7vwgOrzKzlQbFSuQfgm7GYUPpA==",
++      "cpu": [
++        "ppc64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linux-riscv64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.2.4.tgz",
++      "integrity": "sha512-oVDbcR4zUC0ce82teubSm+x6ETixtKZBh/qbREIOcI3cULzDyb18Sr/Wcyx7NRQeQzOiHTNbZFF1UwPS2scyGA==",
++      "cpu": [
++        "riscv64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linux-s390x": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.2.4.tgz",
++      "integrity": "sha512-qmp9VrzgPgMoGZyPvrQHqk02uyjA0/QrTO26Tqk6l4ZV0MPWIW6LTkqOIov+J1yEu7MbFQaDpwdwJKhbJvuRxQ==",
++      "cpu": [
++        "s390x"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linux-x64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.2.4.tgz",
++      "integrity": "sha512-tJxiiLsmHc9Ax1bz3oaOYBURTXGIRDODBqhveVHonrHJ9/+k89qbLl0bcJns+e4t4rvaNBxaEZsFtSfAdquPrw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linuxmusl-arm64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.2.4.tgz",
++      "integrity": "sha512-FVQHuwx1IIuNow9QAbYUzJ+En8KcVm9Lk5+uGUQJHaZmMECZmOlix9HnH7n1TRkXMS0pGxIJokIVB9SuqZGGXw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-libvips-linuxmusl-x64": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.2.4.tgz",
++      "integrity": "sha512-+LpyBk7L44ZIXwz/VYfglaX/okxezESc6UxDSoyo2Ks6Jxc4Y7sGjpgU9s4PMgqgjj1gZCylTieNamqA1MF7Dg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-linux-arm": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linux-arm/-/sharp-linux-arm-0.34.5.tgz",
++      "integrity": "sha512-9dLqsvwtg1uuXBGZKsxem9595+ujv0sJ6Vi8wcTANSFpwV/GONat5eCkzQo/1O6zRIkh0m/8+5BjrRr7jDUSZw==",
++      "cpu": [
++        "arm"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linux-arm": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linux-arm64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.34.5.tgz",
++      "integrity": "sha512-bKQzaJRY/bkPOXyKx5EVup7qkaojECG6NLYswgktOZjaXecSAeCWiZwwiFf3/Y+O1HrauiE3FVsGxFg8c24rZg==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linux-arm64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linux-ppc64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linux-ppc64/-/sharp-linux-ppc64-0.34.5.tgz",
++      "integrity": "sha512-7zznwNaqW6YtsfrGGDA6BRkISKAAE1Jo0QdpNYXNMHu2+0dTrPflTLNkpc8l7MUP5M16ZJcUvysVWWrMefZquA==",
++      "cpu": [
++        "ppc64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linux-ppc64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linux-riscv64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linux-riscv64/-/sharp-linux-riscv64-0.34.5.tgz",
++      "integrity": "sha512-51gJuLPTKa7piYPaVs8GmByo7/U7/7TZOq+cnXJIHZKavIRHAP77e3N2HEl3dgiqdD/w0yUfiJnII77PuDDFdw==",
++      "cpu": [
++        "riscv64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linux-riscv64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linux-s390x": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linux-s390x/-/sharp-linux-s390x-0.34.5.tgz",
++      "integrity": "sha512-nQtCk0PdKfho3eC5MrbQoigJ2gd1CgddUMkabUj+rBevs8tZ2cULOx46E7oyX+04WGfABgIwmMC0VqieTiR4jg==",
++      "cpu": [
++        "s390x"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linux-s390x": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linux-x64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.34.5.tgz",
++      "integrity": "sha512-MEzd8HPKxVxVenwAa+JRPwEC7QFjoPWuS5NZnBt6B3pu7EG2Ge0id1oLHZpPJdn3OQK+BQDiw9zStiHBTJQQQQ==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linux-x64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linuxmusl-arm64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linuxmusl-arm64/-/sharp-linuxmusl-arm64-0.34.5.tgz",
++      "integrity": "sha512-fprJR6GtRsMt6Kyfq44IsChVZeGN97gTD331weR1ex1c1rypDEABN6Tm2xa1wE6lYb5DdEnk03NZPqA7Id21yg==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linuxmusl-arm64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-linuxmusl-x64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.34.5.tgz",
++      "integrity": "sha512-Jg8wNT1MUzIvhBFxViqrEhWDGzqymo3sV7z7ZsaWbZNDLXRJZoRGrjulp60YYtV4wfY8VIKcWidjojlLcWrd8Q==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-libvips-linuxmusl-x64": "1.2.4"
++      }
++    },
++    "node_modules/@img/sharp-wasm32": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.34.5.tgz",
++      "integrity": "sha512-OdWTEiVkY2PHwqkbBI8frFxQQFekHaSSkUIJkwzclWZe64O1X4UlUjqqqLaPbUpMOQk6FBu/HtlGXNblIs0huw==",
++      "cpu": [
++        "wasm32"
++      ],
++      "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/runtime": "^1.7.0"
++      },
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-win32-arm64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.34.5.tgz",
++      "integrity": "sha512-WQ3AgWCWYSb2yt+IG8mnC6Jdk9Whs7O0gxphblsLvdhSpSTtmu69ZG1Gkb6NuvxsNACwiPV6cNSZNzt0KPsw7g==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "Apache-2.0 AND LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-win32-ia32": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.34.5.tgz",
++      "integrity": "sha512-FV9m/7NmeCmSHDD5j4+4pNI8Cp3aW+JvLoXcTUo0IqyjSfAZJ8dIUmijx1qaJsIiU+Hosw6xM5KijAWRJCSgNg==",
++      "cpu": [
++        "ia32"
++      ],
++      "license": "Apache-2.0 AND LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@img/sharp-win32-x64": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.34.5.tgz",
++      "integrity": "sha512-+29YMsqY2/9eFEiW93eqWnuLcWcufowXewwSNIT6UwZdUUCrM3oFjMWH/Z6/TMmb4hlFenmfAVbpWeup2jryCw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "Apache-2.0 AND LGPL-3.0-or-later",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      }
++    },
++    "node_modules/@next/env": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/env/-/env-16.1.6.tgz",
++      "integrity": "sha512-N1ySLuZjnAtN3kFnwhAwPvZah8RJxKasD7x1f8shFqhncnWZn4JMfg37diLNuoHsLAlrDfM3g4mawVdtAG8XLQ==",
++      "license": "MIT"
++    },
++    "node_modules/@next/swc-darwin-arm64": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-16.1.6.tgz",
++      "integrity": "sha512-wTzYulosJr/6nFnqGW7FrG3jfUUlEf8UjGA0/pyypJl42ExdVgC6xJgcXQ+V8QFn6niSG2Pb8+MIG1mZr2vczw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-darwin-x64": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-darwin-x64/-/swc-darwin-x64-16.1.6.tgz",
++      "integrity": "sha512-BLFPYPDO+MNJsiDWbeVzqvYd4NyuRrEYVB5k2N3JfWncuHAy2IVwMAOlVQDFjj+krkWzhY2apvmekMkfQR0CUQ==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-linux-arm64-gnu": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-gnu/-/swc-linux-arm64-gnu-16.1.6.tgz",
++      "integrity": "sha512-OJYkCd5pj/QloBvoEcJ2XiMnlJkRv9idWA/j0ugSuA34gMT6f5b7vOiCQHVRpvStoZUknhl6/UxOXL4OwtdaBw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-linux-arm64-musl": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-musl/-/swc-linux-arm64-musl-16.1.6.tgz",
++      "integrity": "sha512-S4J2v+8tT3NIO9u2q+S0G5KdvNDjXfAv06OhfOzNDaBn5rw84DGXWndOEB7d5/x852A20sW1M56vhC/tRVbccQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-linux-x64-gnu": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-gnu/-/swc-linux-x64-gnu-16.1.6.tgz",
++      "integrity": "sha512-2eEBDkFlMMNQnkTyPBhQOAyn2qMxyG2eE7GPH2WIDGEpEILcBPI/jdSv4t6xupSP+ot/jkfrCShLAa7+ZUPcJQ==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-linux-x64-musl": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-16.1.6.tgz",
++      "integrity": "sha512-oicJwRlyOoZXVlxmIMaTq7f8pN9QNbdes0q2FXfRsPhfCi8n8JmOZJm5oo1pwDaFbnnD421rVU409M3evFbIqg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-win32-arm64-msvc": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-win32-arm64-msvc/-/swc-win32-arm64-msvc-16.1.6.tgz",
++      "integrity": "sha512-gQmm8izDTPgs+DCWH22kcDmuUp7NyiJgEl18bcr8irXA5N2m2O+JQIr6f3ct42GOs9c0h8QF3L5SzIxcYAAXXw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@next/swc-win32-x64-msvc": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-win32-x64-msvc/-/swc-win32-x64-msvc-16.1.6.tgz",
++      "integrity": "sha512-NRfO39AIrzBnixKbjuo2YiYhB6o9d8v/ymU9m/Xk8cyVk+k7XylniXkHwjs4s70wedVffc6bQNbufk5v0xEm0A==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@swc/helpers": {
++      "version": "0.5.15",
++      "resolved": "https://registry.npmjs.org/@swc/helpers/-/helpers-0.5.15.tgz",
++      "integrity": "sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "tslib": "^2.8.0"
++      }
++    },
++    "node_modules/baseline-browser-mapping": {
++      "version": "2.9.19",
++      "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.9.19.tgz",
++      "integrity": "sha512-ipDqC8FrAl/76p2SSWKSI+H9tFwm7vYqXQrItCuiVPt26Km0jS+NzSsBWAaBusvSbQcfJG+JitdMm+wZAgTYqg==",
++      "license": "Apache-2.0",
++      "bin": {
++        "baseline-browser-mapping": "dist/cli.js"
++      }
++    },
++    "node_modules/caniuse-lite": {
++      "version": "1.0.30001769",
++      "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001769.tgz",
++      "integrity": "sha512-BCfFL1sHijQlBGWBMuJyhZUhzo7wer5sVj9hqekB/7xn0Ypy+pER/edCYQm4exbXj4WiySGp40P8UuTh6w1srg==",
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/browserslist"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/caniuse-lite"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "CC-BY-4.0"
++    },
++    "node_modules/client-only": {
++      "version": "0.0.1",
++      "resolved": "https://registry.npmjs.org/client-only/-/client-only-0.0.1.tgz",
++      "integrity": "sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==",
++      "license": "MIT"
++    },
++    "node_modules/detect-libc": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
++      "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
++      "license": "Apache-2.0",
++      "optional": true,
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/nanoid": {
++      "version": "3.3.11",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
++      "integrity": "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==",
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "bin": {
++        "nanoid": "bin/nanoid.cjs"
++      },
++      "engines": {
++        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++      }
++    },
++    "node_modules/next": {
++      "version": "16.1.6",
++      "resolved": "https://registry.npmjs.org/next/-/next-16.1.6.tgz",
++      "integrity": "sha512-hkyRkcu5x/41KoqnROkfTm2pZVbKxvbZRuNvKXLRXxs3VfyO0WhY50TQS40EuKO9SW3rBj/sF3WbVwDACeMZyw==",
++      "license": "MIT",
++      "dependencies": {
++        "@next/env": "16.1.6",
++        "@swc/helpers": "0.5.15",
++        "baseline-browser-mapping": "^2.8.3",
++        "caniuse-lite": "^1.0.30001579",
++        "postcss": "8.4.31",
++        "styled-jsx": "5.1.6"
++      },
++      "bin": {
++        "next": "dist/bin/next"
++      },
++      "engines": {
++        "node": ">=20.9.0"
++      },
++      "optionalDependencies": {
++        "@next/swc-darwin-arm64": "16.1.6",
++        "@next/swc-darwin-x64": "16.1.6",
++        "@next/swc-linux-arm64-gnu": "16.1.6",
++        "@next/swc-linux-arm64-musl": "16.1.6",
++        "@next/swc-linux-x64-gnu": "16.1.6",
++        "@next/swc-linux-x64-musl": "16.1.6",
++        "@next/swc-win32-arm64-msvc": "16.1.6",
++        "@next/swc-win32-x64-msvc": "16.1.6",
++        "sharp": "^0.34.4"
++      },
++      "peerDependencies": {
++        "@opentelemetry/api": "^1.1.0",
++        "@playwright/test": "^1.51.1",
++        "babel-plugin-react-compiler": "*",
++        "react": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0",
++        "react-dom": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0",
++        "sass": "^1.3.0"
++      },
++      "peerDependenciesMeta": {
++        "@opentelemetry/api": {
++          "optional": true
++        },
++        "@playwright/test": {
++          "optional": true
++        },
++        "babel-plugin-react-compiler": {
++          "optional": true
++        },
++        "sass": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/picocolors": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
++      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
++      "license": "ISC"
++    },
++    "node_modules/postcss": {
++      "version": "8.4.31",
++      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.4.31.tgz",
++      "integrity": "sha512-PS08Iboia9mts/2ygV3eLpY5ghnUcfLV/EXTOW1E2qYxJKGGBUtNjN76FYHnMs36RmARn41bC0AZmn+rR0OVpQ==",
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/postcss"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "nanoid": "^3.3.6",
++        "picocolors": "^1.0.0",
++        "source-map-js": "^1.0.2"
++      },
++      "engines": {
++        "node": "^10 || ^12 || >=14"
++      }
++    },
++    "node_modules/react": {
++      "version": "19.2.0",
++      "resolved": "https://registry.npmjs.org/react/-/react-19.2.0.tgz",
++      "integrity": "sha512-tmbWg6W31tQLeB5cdIBOicJDJRR2KzXsV7uSK9iNfLWQ5bIZfxuPEHp7M8wiHyHnn0DD1i7w3Zmin0FtkrwoCQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/react-dom": {
++      "version": "19.2.0",
++      "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.0.tgz",
++      "integrity": "sha512-UlbRu4cAiGaIewkPyiRGJk0imDN2T3JjieT6spoL2UeSf5od4n5LB/mQ4ejmxhCFT1tYe8IvaFulzynWovsEFQ==",
++      "license": "MIT",
++      "dependencies": {
++        "scheduler": "^0.27.0"
++      },
++      "peerDependencies": {
++        "react": "^19.2.0"
++      }
++    },
++    "node_modules/scheduler": {
++      "version": "0.27.0",
++      "resolved": "https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz",
++      "integrity": "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==",
++      "license": "MIT"
++    },
++    "node_modules/semver": {
++      "version": "7.7.4",
++      "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.4.tgz",
++      "integrity": "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==",
++      "license": "ISC",
++      "optional": true,
++      "bin": {
++        "semver": "bin/semver.js"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
++    "node_modules/sharp": {
++      "version": "0.34.5",
++      "resolved": "https://registry.npmjs.org/sharp/-/sharp-0.34.5.tgz",
++      "integrity": "sha512-Ou9I5Ft9WNcCbXrU9cMgPBcCK8LiwLqcbywW3t4oDV37n1pzpuNLsYiAV8eODnjbtQlSDwZ2cUEeQz4E54Hltg==",
++      "hasInstallScript": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "dependencies": {
++        "@img/colour": "^1.0.0",
++        "detect-libc": "^2.1.2",
++        "semver": "^7.7.3"
++      },
++      "engines": {
++        "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/libvips"
++      },
++      "optionalDependencies": {
++        "@img/sharp-darwin-arm64": "0.34.5",
++        "@img/sharp-darwin-x64": "0.34.5",
++        "@img/sharp-libvips-darwin-arm64": "1.2.4",
++        "@img/sharp-libvips-darwin-x64": "1.2.4",
++        "@img/sharp-libvips-linux-arm": "1.2.4",
++        "@img/sharp-libvips-linux-arm64": "1.2.4",
++        "@img/sharp-libvips-linux-ppc64": "1.2.4",
++        "@img/sharp-libvips-linux-riscv64": "1.2.4",
++        "@img/sharp-libvips-linux-s390x": "1.2.4",
++        "@img/sharp-libvips-linux-x64": "1.2.4",
++        "@img/sharp-libvips-linuxmusl-arm64": "1.2.4",
++        "@img/sharp-libvips-linuxmusl-x64": "1.2.4",
++        "@img/sharp-linux-arm": "0.34.5",
++        "@img/sharp-linux-arm64": "0.34.5",
++        "@img/sharp-linux-ppc64": "0.34.5",
++        "@img/sharp-linux-riscv64": "0.34.5",
++        "@img/sharp-linux-s390x": "0.34.5",
++        "@img/sharp-linux-x64": "0.34.5",
++        "@img/sharp-linuxmusl-arm64": "0.34.5",
++        "@img/sharp-linuxmusl-x64": "0.34.5",
++        "@img/sharp-wasm32": "0.34.5",
++        "@img/sharp-win32-arm64": "0.34.5",
++        "@img/sharp-win32-ia32": "0.34.5",
++        "@img/sharp-win32-x64": "0.34.5"
++      }
++    },
++    "node_modules/source-map-js": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
++      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
++      "license": "BSD-3-Clause",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/styled-jsx": {
++      "version": "5.1.6",
++      "resolved": "https://registry.npmjs.org/styled-jsx/-/styled-jsx-5.1.6.tgz",
++      "integrity": "sha512-qSVyDTeMotdvQYoHWLNGwRFJHC+i+ZvdBRYosOFgC+Wg1vx4frN2/RG/NA7SYqqvKNLf39P2LSRA2pu6n0XYZA==",
++      "license": "MIT",
++      "dependencies": {
++        "client-only": "0.0.1"
++      },
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "peerDependencies": {
++        "react": ">= 16.8.0 || 17.x.x || ^18.0.0-0 || ^19.0.0-0"
++      },
++      "peerDependenciesMeta": {
++        "@babel/core": {
++          "optional": true
++        },
++        "babel-plugin-macros": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/tslib": {
++      "version": "2.8.1",
++      "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
++      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
++      "license": "0BSD"
++    }
++  }
++}
+diff --git a/frontend/package.json b/frontend/package.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..51471b481b0d6a9a84404842bc61722db018fa1e
+--- /dev/null
++++ b/frontend/package.json
+@@ -0,0 +1,16 @@
++{
++  "name": "ayushkendra-frontend",
++  "private": true,
++  "version": "1.0.0",
++  "scripts": {
++    "dev": "next dev -H 0.0.0.0 -p 3000",
++    "build": "next build",
++    "start": "next start -p 3000",
++    "lint": "next lint"
++  },
++  "dependencies": {
++    "next": "16.1.6",
++    "react": "19.2.0",
++    "react-dom": "19.2.0"
++  }
++}
+diff --git a/frontend/pages/api/health.js b/frontend/pages/api/health.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..2eece802f0731258850a0b4ad96a72e5e49f7624
+--- /dev/null
++++ b/frontend/pages/api/health.js
+@@ -0,0 +1,3 @@
++export default function handler(req, res) {
++  res.status(200).json({ status: 'ok', service: 'ayushkendra-frontend' });
++}
+diff --git a/frontend/pages/index.js b/frontend/pages/index.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..78335becfbacd97d6d49a333b12937ec1c518681
+--- /dev/null
++++ b/frontend/pages/index.js
+@@ -0,0 +1,13 @@
++export default function Home() {
++  return (
++    <main style={{ fontFamily: 'system-ui, sans-serif', margin: '3rem auto', maxWidth: 860, lineHeight: 1.4 }}>
++      <h1>Ayushkendra Deployment Ready</h1>
++      <p>This frontend is configured for production deployment on a Hostinger VPS.</p>
++      <ul>
++        <li>Next.js standalone build configured</li>
++        <li>Backend connectivity via <code>NEXT_PUBLIC_API_URL</code></li>
++        <li>Health endpoint available at <code>/api/health</code></li>
++      </ul>
++    </main>
++  );
++}
+diff --git a/frontend/public/.gitkeep b/frontend/public/.gitkeep
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/frontend/public/README.txt b/frontend/public/README.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..943932b55708617c6c6145ac861305d7be47e2fb
+--- /dev/null
++++ b/frontend/public/README.txt
+@@ -0,0 +1 @@
++Static assets
+diff --git a/invoices/AYU_INV_SAMPLE.pdf b/invoices/AYU_INV_SAMPLE.pdf
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9941bc5d809616b560108dc81166a1d59927f78
+--- /dev/null
++++ b/invoices/AYU_INV_SAMPLE.pdf
+@@ -0,0 +1,74 @@
++%PDF-1.3
++% ReportLab Generated PDF document http://www.reportlab.com
++1 0 obj
++<<
++/F1 2 0 R /F2 3 0 R
++>>
++endobj
++2 0 obj
++<<
++/BaseFont /Helvetica /Encoding /WinAnsiEncoding /Name /F1 /Subtype /Type1 /Type /Font
++>>
++endobj
++3 0 obj
++<<
++/BaseFont /ZapfDingbats /Name /F2 /Subtype /Type1 /Type /Font
++>>
++endobj
++4 0 obj
++<<
++/Contents 8 0 R /MediaBox [ 0 0 595.2756 841.8898 ] /Parent 7 0 R /Resources <<
++/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
++>> /Rotate 0 /Trans <<
++
++>> 
++  /Type /Page
++>>
++endobj
++5 0 obj
++<<
++/PageMode /UseNone /Pages 7 0 R /Type /Catalog
++>>
++endobj
++6 0 obj
++<<
++/Author (anonymous) /CreationDate (D:20260210083422+00'00') /Creator (ReportLab PDF Library - www.reportlab.com) /Keywords () /ModDate (D:20260210083422+00'00') /Producer (ReportLab PDF Library - www.reportlab.com) 
++  /Subject (unspecified) /Title (untitled) /Trapped /False
++>>
++endobj
++7 0 obj
++<<
++/Count 1 /Kids [ 4 0 R ] /Type /Pages
++>>
++endobj
++8 0 obj
++<<
++/Filter [ /ASCII85Decode /FlateDecode ] /Length 497
++>>
++stream
++Gat=g>u/<k'Sc)T(%7+g)UPo&<3DaCMB?N-IYO=IW`3cGFIePDDin`J1JH@W9?u8c4R5"G.7e^Ik<!qmp,P#A.4>:J"H>;`n2#1^9))/>X\FBf6GQr*MsmhSa/@aBk:4K5YnhS3LL1#CU3Fsi"+LM^s!us_R>ZFSc)O1+DqbPS)F;uJ,\#lPem*GVi4XRYCb)(d&k5P:RcQ:_QgH<*_#pd61@J3%EGVs\H(jO`&L4!ugm'4#'gI+.Z!(a+93d2cZAhZ!jrmqW=j7WgMm]Y63[%ppE`@&&Ga`9/(MUlai*<c>AMC2_\iO)s6D_knd@AmP>.mKd`PEf2AJU*b_W6b%n[Xjd&pea^\`h<]+*efO;5p;VT8JeMj'[qReLHNV*\ANl$[_Br&b+oK)klk<(>8Nh`tmAThdqst3Q>`iT+-Eq^Z'u=;le,YVm]C[*iL>O.\&HGD3X)%?Up,nE/1\>\J\''`J]Cn_ITVTJQLG#9S\lD7=,n;~>endstream
++endobj
++xref
++0 9
++0000000000 65535 f 
++0000000073 00000 n 
++0000000114 00000 n 
++0000000221 00000 n 
++0000000304 00000 n 
++0000000507 00000 n 
++0000000575 00000 n 
++0000000871 00000 n 
++0000000930 00000 n 
++trailer
++<<
++/ID 
++[<8fc08201692e9fbd7191e55b328fa4e7><8fc08201692e9fbd7191e55b328fa4e7>]
++% ReportLab generated PDF document -- digest (http://www.reportlab.com)
++
++/Info 6 0 R
++/Root 5 0 R
++/Size 9
++>>
++startxref
++1517
++%%EOF
+diff --git a/migrations/001_delivery_model.sql b/migrations/001_delivery_model.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..4f364c632eeeb42460f535e8e86dd140a318c5d6
+--- /dev/null
++++ b/migrations/001_delivery_model.sql
+@@ -0,0 +1,9 @@
++
++ALTER TABLE orders
++ADD COLUMN delivery_mode TEXT,
++ADD COLUMN logistics_partner_name TEXT,
++ADD COLUMN dispatch_pincode CHAR(6),
++ADD COLUMN delivery_pincode CHAR(6),
++ADD COLUMN distance_km NUMERIC,
++ADD COLUMN delivery_type TEXT,
++ADD COLUMN delivery_charges NUMERIC;
+diff --git a/scripts/check_deploy_readiness.sh b/scripts/check_deploy_readiness.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..90e0353b98267b055bb40fa530e61041b2e64f40
+--- /dev/null
++++ b/scripts/check_deploy_readiness.sh
+@@ -0,0 +1,32 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++cd "$ROOT_DIR"
++
++fail() {
++  echo "[FAIL] $1" >&2
++  exit 1
++}
++
++pass() {
++  echo "[PASS] $1"
++}
++
++[ -f backend/Dockerfile ] || fail "Missing backend/Dockerfile"
++[ -f frontend/Dockerfile ] || fail "Missing frontend/Dockerfile"
++[ -f docker-compose.yml ] || fail "Missing docker-compose.yml"
++[ -f deploy/nginx/default.conf ] || fail "Missing deploy/nginx/default.conf"
++[ -f .env.example ] || fail "Missing .env.example"
++[ -f docs/HOSTINGER_VPS_DEPLOY.md ] || fail "Missing docs/HOSTINGER_VPS_DEPLOY.md"
++
++pass "Required deployment files exist"
++
++if command -v docker >/dev/null 2>&1; then
++  docker compose config >/dev/null
++  pass "docker compose config is valid"
++else
++  echo "[WARN] Docker is not installed in this environment. Skipping compose validation."
++fi
++
++pass "Deploy readiness checks completed"
+diff --git a/scripts/deploy_hostinger_vps.sh b/scripts/deploy_hostinger_vps.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..2f10775e95242491dc749be7d266f6f61b870963
+--- /dev/null
++++ b/scripts/deploy_hostinger_vps.sh
+@@ -0,0 +1,25 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++DOMAIN="${1:-}"
++EMAIL="${2:-}"
++
++if [[ -z "$DOMAIN" || -z "$EMAIL" ]]; then
++  echo "Usage: $0 <domain> <email>"
++  exit 1
++fi
++
++if [[ ! -f .env ]]; then
++  cp .env.example .env
++  echo "Created .env from .env.example (please edit if needed)"
++fi
++
++sudo apt-get update
++sudo apt-get install -y docker.io docker-compose-plugin certbot
++sudo systemctl enable --now docker
++
++docker compose up -d --build
++
++sudo certbot certonly --webroot -w "$(pwd)/deploy/certbot/www" -d "$DOMAIN" --email "$EMAIL" --agree-tos --non-interactive
++
++echo "Deployment completed. Update deploy/nginx/default.conf for TLS server block and reload nginx container."
+ 
+EOF
+)
